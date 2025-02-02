@@ -2,7 +2,24 @@ import typing
 import re
 from pkg.core import app
 from plugins.Waifu.cells.config import ConfigManager
+import numpy as np
 
+
+class SocialRelationship:
+    def __init__(self, user_id: str):
+        self.user_id = user_id
+        self.intimacy = 5.0  # 初始亲密度
+        self.trust_level = 5.0  # 初始信任度
+        self.shared_topics = []  # 共同话题列表
+        self.interaction_count = 0  # 互动次数
+        
+    def to_dict(self):
+        return {
+            "intimacy": self.intimacy,
+            "trust": self.trust_level,
+            "shared_topics": self.shared_topics,
+            "interaction_count": self.interaction_count
+        }
 
 class Cards:
 
@@ -23,6 +40,11 @@ class Cards:
         self._prologue = ""
         self._additional_keys = {}
         self._has_preset = True
+        self._interest_keywords = []  # 新增兴趣标签字段
+        self._social_network = {}  # 新增社交网络字典，key为用户ID
+        self._personality_vector = np.zeros(5)  # 新增五维个性向量 (开放度,责任度,外向度,亲和度,神经质)
+
+ 
 
     async def load_config(self, character: str, launcher_type: str):
         if character == "off":
@@ -44,6 +66,16 @@ class Cards:
             self._background = self._background + [f"你是{self._assistant_name}，用户是{self._user_name}。"]
         self._rules = config.data.get("Rules", [])
         self._prologue = config.data.get("Prologue", "")
+
+        # 新增兴趣标签加载
+        self._interest_keywords = config.data.get("Interests", [])
+        
+        # 加载个性五维
+        personality_config = config.data.get("Personality", {})
+        self._init_personality_vector(personality_config)
+
+        # 从记忆系统加载社交关系数据
+        await self._load_social_network(launcher_type)
 
         # Collect additional keys
         predefined_keys = {"user_name", "assistant_name", "language", "Profile", "Skills", "Background", "Rules", "Prologue", "max_manner_change", "value_descriptions"}
@@ -140,3 +172,49 @@ class Cards:
         else:
             # 其他类型，强制转换为字符串
             return prefix + str(value)
+        
+    def _init_personality_vector(self, personality_data: dict):
+        default = {
+            "openness": 0.5,
+            "conscientiousness": 0.5,
+            "extraversion": 0.5,
+            "agreeableness": 0.5,
+            "neuroticism": 0.5
+        }
+        traits = {**default, **personality_data}
+        self._personality_vector = np.array([
+            traits["openness"],
+            traits["conscientiousness"],
+            traits["extraversion"],
+            traits["agreeableness"],
+            traits["neuroticism"]
+        ], dtype=np.float32)  # 明确数据类型
+
+    # 新增社交网络加载方法
+    async def _load_social_network(self, launcher_type: str):
+        social_file = f"data/plugins/Waifu/data/social_{launcher_type}.json"
+        try:
+            with open(social_file, 'r') as f:
+                data = json.load(f)
+                for user_id, rel_data in data.items():
+                    rel = SocialRelationship(user_id)
+                    rel.intimacy = rel_data.get('intimacy', 5.0)
+                    rel.trust_level = rel_data.get('trust', 5.0)
+                    rel.shared_topics = rel_data.get('shared_topics', [])
+                    rel.interaction_count = rel_data.get('interaction_count', 0)
+                    self._social_network[user_id] = rel
+        except FileNotFoundError:
+            pass
+
+    # 新增获取兴趣标签接口
+    @property
+    def interest_keywords(self) -> list:
+        return self._interest_keywords
+
+    # 新增社交关系访问方法
+    def get_relationship(self, user_id: str) -> SocialRelationship:
+        return self._social_network.get(user_id, SocialRelationship(user_id))
+
+    # 新增个性相似度计算方法（供决策引擎调用）
+    def calculate_personality_similarity(self, other_vector: np.ndarray) -> float:
+        return float(np.dot(self._personality_vector, other_vector))
